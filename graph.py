@@ -126,8 +126,8 @@ def summarize_weather(state):
     response = llm.invoke([HumanMessage(content=f"{prompt}\n{weather_json}")])
     print("Summary Response:", response.content)
     # state["response"] = response.content
-    print("here diarRhea")
-    return {"response": response.content}
+    state["response"] = response.content
+    return state
 
 
 # Graph Definition
@@ -168,7 +168,9 @@ workflow.add_edge("weather_node", "summarize")
 
 # End points
 workflow.add_edge("fallback", END)
-workflow.add_edge("summarize", END)
+# workflow.add_edge("summarize", END)
+
+workflow.set_finish_point("summarize")
 
 # Compile
 app = workflow.compile()
