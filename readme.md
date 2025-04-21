@@ -18,7 +18,7 @@ Under the hood, it uses a local [DeepSeek](https://deepseek.com/) LLM (`deepseek
 
 ## Installation
 
-To run the program, first you need to install Ollama and then DeepSeek using the following commands (assuming a linux OS/WSL):
+To run the program, first you need to install Ollama and then DeepSeek using the following commands (assuming a Linux OS/WSL):
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama run deepseek-r1:8b
@@ -65,4 +65,4 @@ This will launch a Gradio interface at `http://127.0.0.1:7860/`.
 ---
 
 ## 🛠️ Note
-I used one day's data for the forecast only because the local DeepSeek model was too dumb to be able to parse the JSON and understand the data for more than one day, and I wanted to try out DeepSeek for this project. Originally, as you can see in the commit history, three days' data were sent to the LLM. 
+I used one day's data for the forecast only because the local DeepSeek model was too dumb to parse the JSON and understand the data for more than one day, and I wanted to try out DeepSeek for this project. Originally, as you can see in the commit history, three days' data were sent to the LLM. 
