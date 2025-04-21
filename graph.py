@@ -1,10 +1,11 @@
 import os
 import json
 import requests
+import re
 from dotenv import load_dotenv
 
 from langgraph.graph import Graph, END
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.chat_models import ChatOllama
 
 # Load .env
@@ -25,6 +26,9 @@ class GraphState(dict):
     def __init__(self, *args, **kwargs):
         print("Initializing GraphState with:", args, kwargs)
         super().__init__(*args, **kwargs)
+        if "chat_history" not in self:
+            self["chat_history"] = []
+
 
 
 ### NODE 1: Extract Intent & City ###
@@ -39,21 +43,49 @@ def extract_intent_city(state):
     if not prompt:
         raise ValueError("Prompt for intent extraction is not set in the environment variables.")
     print("Prompt:", prompt)
-    response = llm.invoke([HumanMessage(content=f"{prompt}\n{user_input}")])
+
+    # Build full message list
+    raw_messages = [
+        {"role": "system", "content": prompt},
+    ]
+    
+    # Add chat history if available
+    if "chat_history" in state:
+        raw_messages.extend(state["chat_history"])
+    
+    # Add user input
+    raw_messages.append({"role": "user", "content": user_input})
+
+    # Convert to LangChain message objects
+    role_map = {
+        "system": SystemMessage,
+        "user": HumanMessage,
+        "assistant": AIMessage
+    }
+
+    langchain_messages = [role_map[msg["role"]](content=msg["content"]) for msg in raw_messages]
+
+    print("\n\n######LangChain Messages:", langchain_messages)
+    print("######\n\n")
+
+    response = llm.invoke(langchain_messages)
+
     print("Raw LLM Response:", response.content)
 
     city = None
     intent = None
 
     try:
-        # find json in the response
-        start = response.content.find("{")
-        end = response.content.rfind("}") + 1
-        json_str = response.content[start:end]
+        # Extract JSON from the response
+        match = re.search(r"\{.*?\}", response.content, re.DOTALL)
+        if not match:
+            raise ValueError("No JSON object found in LLM response.")
+        json_str = match.group(0)
         print("Extracted JSON String:", json_str)
-        # parse the json
         response_json = json.loads(json_str)
+
         print("Parsed JSON:", response_json)
+        
         # extract city and intent
         city = response_json.get("city")
         intent = response_json.get("intent")
@@ -63,11 +95,31 @@ def extract_intent_city(state):
         if not city or not intent:
             raise ValueError("City or intent not found in the response.")
         
-    except:
-        pass
+    except Exception as e:
+        print(f"[Intent Extraction Error] {e}")
+        city = None
+        intent = None
 
     state["city"] = city
     state["intent"] = intent
+    
+    if "chat_history" not in state:
+        state["chat_history"] = []
+
+    state["chat_history"].append({"role": "user", "content": user_input})
+    # remove think tags and text between them from ai responsne before appending it
+    if "<think>" in response.content:
+        start = response.content.find("<think>")
+        end = response.content.find("</think>")
+        if end != -1:
+            response.content = response.content[:start] + response.content[end + len("</think>"):]
+        else:
+            response.content = response.content[start + len("<think>"):]
+
+    print("Response content stripped:", response.content)
+
+    state["chat_history"].append({"role": "assistant", "content": response.content})
+
     return state
 
 
@@ -119,13 +171,65 @@ def get_forecast_weather(state):
 
 
 ### NODE 5: Summarize ###
+# def summarize_weather(state):
+#     print("\n[Node: LLM Summarize]")
+#     prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
+#     weather_json = json.dumps(state.get("weather_data"), indent=2)
+#     response = llm.invoke([HumanMessage(content=f"{prompt}\n{weather_json}")])
+#     print("Summary Response:", response.content)
+#     # state["response"] = response.content
+#     state["response"] = response.content
+#     return state
+
+# def summarize_weather(state):
+#     print("\n[Node: LLM Summarize]")
+#     prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
+    
+#     user_input = state.get("user_input", "")
+#     weather_json = json.dumps(state.get("weather_data"), indent=2)
+
+#     full_prompt = f"{prompt}\nUser Input: {user_input}\n\nWeather Data:\n{weather_json}"
+    
+#     response = llm.invoke([HumanMessage(content=full_prompt)])
+#     print("Summary Response:", response.content)
+#     state["response"] = response.content
+
+#     state["chat_history"].append({"role": "user", "content": user_input})
+#     state["chat_history"].append({"role": "assistant", "content": response.content})
+    
+#     return state
+
 def summarize_weather(state):
     print("\n[Node: LLM Summarize]")
     prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
+    user_input = state.get("user_input", "")
     weather_json = json.dumps(state.get("weather_data"), indent=2)
-    response = llm.invoke([HumanMessage(content=f"{prompt}\n{weather_json}")])
+
+    # Build full message list
+    raw_messages = [
+        {"role": "system", "content": prompt},
+        *state.get("chat_history", []),
+        {"role": "user", "content": f"My latest input was: {user_input}."},
+        {"role": "assistant", "content": f"Here is the weather data: {weather_json}"}
+    ]
+
+    # Convert to LangChain message objects
+    role_map = {
+        "system": SystemMessage,
+        "user": HumanMessage,
+        "assistant": AIMessage
+    }
+
+    # Convert to HumanMessage format
+    # langchain_messages = [HumanMessage(content=msg["content"]) for msg in messages if msg["role"] == "user"]
+    langchain_messages = [role_map[msg["role"]](content=msg["content"]) for msg in raw_messages]
+    print("\n\n######LangChain Messages2:", langchain_messages)
+    print("######\n\n")
+
+    response = llm.invoke(langchain_messages)
     print("Summary Response:", response.content)
-    # state["response"] = response.content
+
+    # state["chat_history"].append({"role": "assistant", "content": response.content})
     state["response"] = response.content
     return state
 
