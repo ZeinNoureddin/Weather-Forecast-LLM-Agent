@@ -3,10 +3,14 @@ import json
 import requests
 import re
 from dotenv import load_dotenv
+from prompts import PROMPT_INTENT_EXTRACTION, PROMPT_SUMMARIZE_WEATHER
+from datetime import datetime, timedelta
+import pytz
 
 from langgraph.graph import Graph, END
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.chat_models import ChatOllama
+
 
 # Load .env
 load_dotenv()
@@ -21,6 +25,8 @@ OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 # Custom state
 # class GraphState(dict):
 #     pass
+
+EGYPT_TZ = pytz.timezone("Africa/Cairo")
 
 class GraphState(dict):
     def __init__(self, *args, **kwargs):
@@ -39,10 +45,10 @@ def extract_intent_city(state):
     print("\n[Node: Extract Intent & City]")
     print(f"User input: {user_input}")
 
-    prompt = os.getenv("PROMPT_INTENT_EXTRACTION")
+    prompt = PROMPT_INTENT_EXTRACTION
     if not prompt:
         raise ValueError("Prompt for intent extraction is not set in the environment variables.")
-    print("Prompt:", prompt)
+    print("\nPrompt 1:", prompt)
 
     # Build full message list
     raw_messages = [
@@ -160,48 +166,53 @@ def get_forecast_weather(state):
     url = f"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
     r = requests.get(url)
     data = r.json()
-    
-    # Keep only every 4th item (approx 12h interval), up to 6 entries (3 days)
-    filtered = data.get("list", [])[::4][:6]
-    data["list"] = filtered
 
-    print("Filtered Forecast Data:", json.dumps(filtered, indent=2))
+    forecast_list = data.get("list", [])
+    filtered = []
+
+    # Define tomorrow's date in Egypt time
+    now = datetime.now(EGYPT_TZ)
+    tomorrow = now + timedelta(days=1)
+    tomorrow_date = tomorrow.date()
+
+    # Loop through all forecast entries
+    for entry in forecast_list:
+        # Convert timestamp to Egypt local time
+        utc_time = datetime.utcfromtimestamp(entry["dt"]).replace(tzinfo=pytz.utc)
+        local_time = utc_time.astimezone(EGYPT_TZ)
+
+        # Check if the date is exactly tomorrow
+        if local_time.date() == tomorrow_date:
+            # Match hours close to 00:00 or 12:00
+            if local_time.hour in [23, 0, 1]:
+                entry["local_time_label"] = "00:00"
+                filtered.append(entry)
+            elif local_time.hour in [11, 12, 13]:
+                entry["local_time_label"] = "12:00"
+                filtered.append(entry)
+
+        # Optional: simplify the dt_txt field to just the date
+        if "dt_txt" in entry:
+            entry["dt_txt"] = local_time.strftime("%Y-%m-%d")
+
+        # remove "temp_min" and "temp_max" from the entry
+        if "main" in entry:
+            entry["main"].pop("temp_min", None)
+            entry["main"].pop("temp_max", None)
+
+        # Stop when we have both entries (max 2)
+        if len(filtered) >= 2:
+            break
+
+    data["list"] = filtered
+    print("Filtered Forecast Data:", json.dumps(filtered, indent=2, default=str))
     state["weather_data"] = data
     return state
 
 
-### NODE 5: Summarize ###
-# def summarize_weather(state):
-#     print("\n[Node: LLM Summarize]")
-#     prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
-#     weather_json = json.dumps(state.get("weather_data"), indent=2)
-#     response = llm.invoke([HumanMessage(content=f"{prompt}\n{weather_json}")])
-#     print("Summary Response:", response.content)
-#     # state["response"] = response.content
-#     state["response"] = response.content
-#     return state
-
-# def summarize_weather(state):
-#     print("\n[Node: LLM Summarize]")
-#     prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
-    
-#     user_input = state.get("user_input", "")
-#     weather_json = json.dumps(state.get("weather_data"), indent=2)
-
-#     full_prompt = f"{prompt}\nUser Input: {user_input}\n\nWeather Data:\n{weather_json}"
-    
-#     response = llm.invoke([HumanMessage(content=full_prompt)])
-#     print("Summary Response:", response.content)
-#     state["response"] = response.content
-
-#     state["chat_history"].append({"role": "user", "content": user_input})
-#     state["chat_history"].append({"role": "assistant", "content": response.content})
-    
-#     return state
-
 def summarize_weather(state):
     print("\n[Node: LLM Summarize]")
-    prompt = os.getenv("PROMPT_SUMMARIZE_WEATHER")
+    prompt = PROMPT_SUMMARIZE_WEATHER
     user_input = state.get("user_input", "")
     weather_json = json.dumps(state.get("weather_data"), indent=2)
 
@@ -223,6 +234,15 @@ def summarize_weather(state):
     # Convert to HumanMessage format
     # langchain_messages = [HumanMessage(content=msg["content"]) for msg in messages if msg["role"] == "user"]
     langchain_messages = [role_map[msg["role"]](content=msg["content"]) for msg in raw_messages]
+
+    if state.get("intent") == "forecast":
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        tomorrow = today + timedelta(days=1)
+
+        # Add date to the prompt
+        langchain_messages.append(SystemMessage(content=f"Tomorrow's date is: {tomorrow.strftime('%Y-%m-%d')}."))
+        
     print("\n\n######LangChain Messages2:", langchain_messages)
     print("######\n\n")
 
