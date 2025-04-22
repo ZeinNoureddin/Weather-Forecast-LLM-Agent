@@ -23,7 +23,7 @@ To run the program, first you need to install Ollama and then DeepSeek using the
 curl -fsSL https://ollama.com/install.sh | sh
 ollama run deepseek-r1:8b
 ```
-Now, you can clone the github and run the program:
+Now, you can clone the repo and run the program:
 ```bash
 git clone https://github.com/your-username/weather-agent.git
 cd weather-agent
